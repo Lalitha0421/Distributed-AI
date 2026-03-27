@@ -1,58 +1,54 @@
 
-# # llm_service.py
-# # llm_service.py
-# # llm_service.py
-# # llm_service.py
-
 # from groq import Groq
-# from core.config import GROQ_API_KEY, MODEL_NAME
+# from app.core.config import GROQ_API_KEY, MODEL_NAME
+# from app.core.logger import logger
 
 # client = Groq(api_key=GROQ_API_KEY)
 
+# def generate_answer(question: str, context: str, history: list):
+#     """Generate answer using Groq LLM with context and conversation history."""
+#     try:
+#         # Format history for prompt
+#         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history]) if history else "No previous conversation."
 
-# def generate_answer(question, context,history):
+#         prompt = f"""
+# You are a helpful AI assistant answering questions based ONLY on the provided document context.
 
-#     prompt = f"""
-# You are an AI assistant answering questions from documents.
+# Conversation History:
+# {history_str}
 
-# Use ONLY the information provided in the context.
-# Conversation history:
-# {history}
-
-
-# Context:
+# Context from documents:
 # {context}
 
-# Question:
-# {question}
+# Question: {question}
 
 # Instructions:
-# - Write a clear explanation
-# - Remove duplicate information
-# - Do NOT include raw newline characters like \\n
-# - Do NOT repeat the context
-# - Keep the answer concise
-# - Use bullet points only if helpful
-# - If the context does not contain the answer, respond exactly:
-#   "No relevant information found in the selected document."
+# - Answer using ONLY the information in the context above.
+# - Be clear, concise, and accurate.
+# - If the context does not contain the answer, respond exactly: "No relevant information found in the selected document."
+# - Do not add information from your general knowledge.
+# - Use bullet points only if it improves readability.
 
 # Answer:
 # """
 
-#     response = client.chat.completions.create(
-#         model=MODEL_NAME,
-#         messages=[
-#             {"role": "system", "content": "Answer using only the context."},
-#             {"role": "user", "content": prompt}
-#         ],
-#         temperature=0.3,
-#         max_tokens=400
-#     )
+#         response = client.chat.completions.create(
+#             model=MODEL_NAME,
+#             messages=[
+#                 {"role": "system", "content": "You are a precise document-based assistant."},
+#                 {"role": "user", "content": prompt}
+#             ],
+#             temperature=0.3,
+#             max_tokens=500
+#         )
 
-#     answer = response.choices[0].message.content
-#     answer = answer.replace("\n\n", "\n").strip()
-#     return answer
+#         answer = response.choices[0].message.content.strip()
+#         logger.info(f"Generated answer for question: {question[:60]}...")
+#         return answer
 
+#     except Exception as e:
+#         logger.error(f"LLM generation failed: {e}")
+#         return "Sorry, I encountered an error while generating the answer. Please try again."
 
 from groq import Groq
 from app.core.config import GROQ_API_KEY, MODEL_NAME
@@ -60,47 +56,47 @@ from app.core.logger import logger
 
 client = Groq(api_key=GROQ_API_KEY)
 
-def generate_answer(question: str, context: str, history: list):
-    """Generate answer using Groq LLM with context and conversation history."""
+# backend/app/services/llm_service.py  (replace only the function, keep the imports)
+
+async def generate_answer_stream(question: str, context: str, history: list):
+    """Generate answer with streaming support and better handling for short documents."""
     try:
-        # Format history for prompt
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history]) if history else "No previous conversation."
 
         prompt = f"""
-You are a helpful AI assistant answering questions based ONLY on the provided document context.
+You are a helpful assistant answering questions from the given document.
 
-Conversation History:
-{history_str}
-
-Context from documents:
+Document Content:
 {context}
 
 Question: {question}
 
-Instructions:
-- Answer using ONLY the information in the context above.
-- Be clear, concise, and accurate.
-- If the context does not contain the answer, respond exactly: "No relevant information found in the selected document."
-- Do not add information from your general knowledge.
-- Use bullet points only if it improves readability.
-
-Answer:
+Answer the question based on the document above. 
+If the document has relevant information, use it. 
+If the document is short or partial, still give the best answer possible from what is available.
+Keep the answer clear and direct.
 """
 
-        response = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are a precise document-based assistant."},
+                {"role": "system", "content": "You are a precise assistant that answers from given document context."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=600,
+            stream=True
         )
 
-        answer = response.choices[0].message.content.strip()
-        logger.info(f"Generated answer for question: {question[:60]}...")
-        return answer
+        full_answer = ""
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                content = chunk.choices[0].delta.content
+                full_answer += content
+                yield content
+
+        logger.info(f"Streamed answer for: {question[:60]}...")
 
     except Exception as e:
-        logger.error(f"LLM generation failed: {e}")
-        return "Sorry, I encountered an error while generating the answer. Please try again."
+        logger.error(f"Streaming generation failed: {e}")
+        yield "Sorry, I encountered an error while generating the answer. Please try again."
