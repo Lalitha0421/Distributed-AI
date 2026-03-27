@@ -109,10 +109,9 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from app.core.logger import logger
 
-# Load embedding model once
+# Load embedding model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Ensure DB directory exists
 os.makedirs("chroma_db", exist_ok=True)
 
 client = Client(
@@ -123,37 +122,42 @@ client = Client(
 )
 
 def sanitize_collection_name(name: str) -> str:
-    """Sanitize filename to create valid ChromaDB collection name."""
+    """Robust sanitization for ChromaDB collection names."""
     if not name:
-        return "default_collection"
+        return "default_document"
 
     # Remove file extension
     name = os.path.splitext(name)[0]
-    
-    # Replace invalid characters with underscore
+
+    # Replace all invalid characters with underscore
     name = re.sub(r'[^a-zA-Z0-9._-]', '_', name)
-    
+
     # Remove consecutive underscores
     name = re.sub(r'_+', '_', name)
-    
-    # Remove leading/trailing underscores or dots
+
+    # Remove leading/trailing underscores and dots
     name = name.strip('_.-')
-    
-    # Ensure it starts and ends with alphanumeric
+
+    # Ensure minimum length and valid start/end
+    if len(name) < 3:
+        name = "doc_" + name
     if not name or not name[0].isalnum():
         name = "doc_" + name
     if not name[-1].isalnum():
         name = name + "_doc"
-    
-    # Limit length (ChromaDB max ~63 chars)
+
+    # Limit length
     if len(name) > 63:
         name = name[:60] + "_doc"
-    
+
     return name.lower()
+
 
 def get_collection(document_name: str):
     collection_name = sanitize_collection_name(document_name)
+    logger.info(f"Using collection name: {collection_name} for file: {document_name}")
     return client.get_or_create_collection(name=collection_name)
+
 
 def store_chunks(chunks: list, document_name: str = "uploaded_document"):
     if not chunks:
@@ -183,6 +187,7 @@ def store_chunks(chunks: list, document_name: str = "uploaded_document"):
     logger.info(f"Stored {len(chunks)} chunks for document: {document_name}")
     return len(chunks)
 
+
 def search_chunks(query: str, source: str = None):
     try:
         query_embedding = embedding_model.encode(query).tolist()
@@ -211,22 +216,19 @@ def search_chunks(query: str, source: str = None):
                 "text": doc,
                 "source": meta.get("source"),
                 "chunk_id": meta.get("chunk_id"),
-                "score": float(dist)
+                "score": float(dist) if dist is not None else None
             })
-
         return combined
 
     except Exception as e:
         logger.error(f"Vector search failed: {e}")
         return []
 
+
 def get_all_chunks(source: str = None):
     try:
-        if source:
-            collection = get_collection(source)
-            results = collection.get()
-        else:
-            results = client.get_or_create_collection("default").get()
+        collection = get_collection(source if source else "default")
+        results = collection.get()
 
         documents = results.get("documents", [])
         metadatas = results.get("metadatas", [])
@@ -240,7 +242,6 @@ def get_all_chunks(source: str = None):
                 "source": meta.get("source"),
                 "chunk_id": meta.get("chunk_id")
             })
-
         return combined
 
     except Exception as e:

@@ -107,20 +107,24 @@ from app.core.config import MODEL_NAME
 
 app = FastAPI(
     title="AI Knowledge Assistant with Self-Improving RAG",
-    description="Advanced RAG system with hybrid search, reranking, query rewrite, and multi-agent capabilities (Phase 1)",
+    description="Advanced RAG system with hybrid search, reranking, and streaming",
     version="1.0.0"
 )
 
-# CORS - Required for React frontend later
+# Explicit CORS for React frontend (this fixes the Network Error on upload)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # Change to ["http://localhost:3000"] later
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",   # in case you change port later
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include API routers
+# Include routers
 app.include_router(upload_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 
@@ -129,8 +133,7 @@ async def home():
     return {
         "message": "AI Knowledge Assistant is running 🚀",
         "llm_model": MODEL_NAME,
-        "status": "healthy",
-        "version": "1.0.0"
+        "status": "healthy"
     }
 
 if __name__ == "__main__":

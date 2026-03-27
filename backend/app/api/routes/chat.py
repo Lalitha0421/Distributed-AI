@@ -72,10 +72,11 @@
 
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from app.services.hybrid_search import hybrid_search
 from app.services.reranker import rerank
 from app.services.memory import add_message, get_history
-from app.services.llm_service import generate_answer
+from app.services.llm_service import generate_answer_stream
 from app.services.query_rewriter import rewrite_query
 from app.core.logger import logger
 from app.models.request_models import QuestionRequest
@@ -95,54 +96,45 @@ async def ask_question(request: QuestionRequest, session_id: str = "default", so
     try:
         rewritten_query = rewrite_query(question)
     except Exception as e:
-        logger.warning(f"Query rewrite failed: {e}. Using original query.")
+        logger.warning(f"Query rewrite failed: {e}")
         rewritten_query = question
 
-    # Retrieve chunks
+    # Retrieve and rerank
     chunks = hybrid_search(rewritten_query, source)
-
     if not chunks:
-        return {
-            "question": question,
-            "rewritten_query": rewritten_query,
-            "answer": "No relevant information found in the uploaded documents.",
-            "sources": []
-        }
+        async def no_info_stream():
+            yield "data: No relevant information found in the uploaded documents.\n\n"
+        return StreamingResponse(no_info_stream(), media_type="text/event-stream")
 
-    # Rerank
     chunks = rerank(rewritten_query, chunks)
 
     # Build context
     context_parts = [f"Source {i+1}:\n{c.get('text', '')}" for i, c in enumerate(chunks[:3])]
     context = "\n\n".join(context_parts)
 
-    # Get conversation history
+    # Get history
     history = get_history(session_id)
 
-    # Generate answer
-    try:
-        answer = generate_answer(question, context, history)
-    except Exception as e:
-        logger.error(f"LLM generation failed: {e}")
-        answer = "Sorry, I encountered an error while generating the answer."
+    # Stream the answer
+    async def stream_response():
+        full_answer = ""
+        async for token in generate_answer_stream(question, context, history):
+            full_answer += token
+            yield f"data: {token}\n\n"
 
-    # Store in memory
-    add_message(session_id, "user", question)
-    add_message(session_id, "assistant", answer)
+        # Store final answer in memory
+        add_message(session_id, "user", question)
+        add_message(session_id, "assistant", full_answer)
 
-    # Prepare sources for response
-    sources = [
-        {
-            "source": c.get("source", "unknown"),
-            "chunk_id": c.get("chunk_id", "unknown"),
-            "score": c.get("score")
-        }
-        for c in chunks[:3]
-    ]
+        # Send sources at the end
+        sources = [
+            {
+                "source": c.get("source", "unknown"),
+                "chunk_id": c.get("chunk_id", "unknown"),
+                "score": c.get("score")
+            }
+            for c in chunks[:3]
+        ]
+        yield f"data: [SOURCES]{sources}\n\n"
 
-    return {
-        "question": question,
-        "rewritten_query": rewritten_query,
-        "answer": answer,
-        "sources": sources
-    }
+    return StreamingResponse(stream_response(), media_type="text/event-stream")
