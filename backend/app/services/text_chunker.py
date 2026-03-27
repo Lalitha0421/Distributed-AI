@@ -19,14 +19,16 @@
 
 from typing import List
 
-def split_text_into_chunks(
-    text: str, 
-    chunk_size: int = 400, 
-    chunk_overlap: int = 80
-) -> List[str]:
-    """Improved chunking that works better for short documents."""
+def split_text_into_chunks(text: str, chunk_size: int = 300, chunk_overlap: int = 50) -> List[str]:
+    """Better chunking for short and long documents."""
     if not text or len(text.strip()) == 0:
         return []
+
+    text = text.strip()
+
+    # If the entire document is very short, return it as one chunk
+    if len(text) < 400:
+        return [text]
 
     chunks = []
     start = 0
@@ -36,11 +38,11 @@ def split_text_into_chunks(
         end = start + chunk_size
         chunk = text[start:end]
 
-        # Try to cut at sentence end for cleaner chunks
+        # Try to break at natural points
         if end < text_length:
-            last_period = max(chunk.rfind('.'), chunk.rfind('\n'))
-            if last_period > chunk_size // 2:
-                end = start + last_period + 1
+            last_break = max(chunk.rfind('.'), chunk.rfind('\n'), chunk.rfind(' '))
+            if last_break > chunk_size // 2:
+                end = start + last_break + 1
                 chunk = text[start:end]
 
         cleaned = chunk.strip()
@@ -48,9 +50,5 @@ def split_text_into_chunks(
             chunks.append(cleaned)
 
         start = end - chunk_overlap
-
-    # If document is very short, return the whole text as one chunk
-    if not chunks and text.strip():
-        chunks.append(text.strip())
 
     return chunks
